@@ -1,5 +1,12 @@
 import numpy as np
 
+try:
+    from cuda_kernels import matmul as matmul_cuda
+
+    HAS_CUDA = True
+except ImportError:
+    HAS_CUDA = False
+
 # ----- Helper functions -----
 
 
@@ -76,7 +83,7 @@ class MatMulFunction(AutogradFunction):
 
         a_T = np.swapaxes(a, -1, -2)
         b_T = np.swapaxes(b, -1, -2)
-        
+
         grad_a = np.matmul(grad_output, b_T)
         grad_b = np.matmul(a_T, grad_output)
         return grad_a, grad_b
@@ -131,7 +138,10 @@ class CrossEntropyLossFunction(AutogradFunction):
 
         # Compute cross-entropy loss for integer labels
         batch_size = logits.shape[0]
-        loss = -np.sum(np.log(softmax_probs + eps)[np.arange(batch_size), labels]) / batch_size
+        loss = (
+            -np.sum(np.log(softmax_probs + eps)[np.arange(batch_size), labels])
+            / batch_size
+        )
 
         ctx.save_for_backward(softmax_probs, labels)
         return loss
@@ -179,7 +189,9 @@ class AutogradNode:
             if grad is None:
                 continue
             if input_tensor.requires_grad:
-                input_tensor.grad = grad if input_tensor.grad is None else input_tensor.grad + grad
+                input_tensor.grad = (
+                    grad if input_tensor.grad is None else input_tensor.grad + grad
+                )
             if input_tensor.grad_fn is not None:
                 input_tensor.grad_fn.backward(grad)
 
@@ -196,7 +208,9 @@ class Tensor:
     def __init__(
         self, data, requires_grad=False, grad_fn: AutogradNode = None, dtype=np.float32
     ):
-        self.data = np.array(data, dtype=data.dtype if isinstance(data, np.ndarray) else dtype)
+        self.data = np.array(
+            data, dtype=data.dtype if isinstance(data, np.ndarray) else dtype
+        )
         self.requires_grad = requires_grad
         self.grad = None  # Accumulated gradient
         self.grad_fn = grad_fn  # Node that produced this tensor (None for leaves)
@@ -248,7 +262,7 @@ class Tensor:
 
     def __getitem__(self, key):
         return Tensor(self.data[key], requires_grad=self.requires_grad)
-    
+
     def __repr__(self):
         return f"Tensor(data={self.data}, requires_grad={self.requires_grad})"
 
@@ -281,6 +295,8 @@ def softmax(x: Tensor) -> Tensor:
 
 def cross_entropy_loss(logits: Tensor, labels: Tensor) -> Tensor:
     ctx = AutogradContext()
-    loss_data = CrossEntropyLossFunction.forward(ctx, logits.data, labels.data.flatten().astype(np.intp))
+    loss_data = CrossEntropyLossFunction.forward(
+        ctx, logits.data, labels.data.flatten().astype(np.intp)
+    )
     grad_fn = AutogradNode(CrossEntropyLossFunction, ctx, [logits, labels])
     return Tensor(loss_data, requires_grad=logits.requires_grad, grad_fn=grad_fn)
